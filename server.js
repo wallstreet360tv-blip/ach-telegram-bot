@@ -1,5 +1,5 @@
-// server.js — Investe.pro (Plan B con fix 200 inmediato)
-// CommonJS (require) para compatibilidad.
+// server.js — Investe.pro (Plan B + fix webhook 200 inmediato)
+// CommonJS para compatibilidad.
 
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -15,7 +15,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const CHANNEL_ID = process.env.CHANNEL_ID; // ej: -1003161708891
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
-const CHANNEL_INVITE_LINK = process.env.CHANNEL_INVITE_LINK || ''; // opcional: link fijo
+const CHANNEL_INVITE_LINK = process.env.CHANNEL_INVITE_LINK || ''; // opcional
 
 // ====== CLIENTES ======
 const stripe = Stripe(STRIPE_SECRET_KEY);
@@ -34,20 +34,20 @@ app.use(bodyParser.json());
 // Salud
 app.get('/', (_req, res) => res.send('Investe.pro bot OK 🚀'));
 
-// ====== WEBHOOK TELEGRAM (FIX: responder 200 inmediatamente) ======
-app.post('/telegram-webhook', express.json(), (req, res) => {
-  // Respondemos ya para evitar 502 por timeouts/proxy.
-  res.status(200).end();
+// ====== WEBHOOK TELEGRAM (responder 200 inmediato) ======
+app.post('/telegram-webhook', express.json(), async (req, res) => {
+  // Responder YA para evitar 502 por timeouts de proxy
+  res.status(200).send('OK');
 
   try {
     console.log('🟡 TG update recibido:', JSON.stringify(req.body));
-    bot.processUpdate(req.body);
+    await bot.processUpdate(req.body);
   } catch (e) {
-    console.error('Error processUpdate:', e);
+    console.error('❌ Error en Telegram webhook:', e);
   }
 });
 
-// ====== FLUJO BOT ======
+// ====== FLUJO DEL BOT ======
 bot.onText(/^\/start/, async (msg) => {
   const chatId = msg.chat.id;
   await ensureInviteLink();
@@ -60,48 +60,40 @@ bot.onText(/^\/start/, async (msg) => {
 });
 
 bot.on('message', async (msg) => {
-  // Ignora comandos (el /start ya se maneja)
+  // Ignora comandos; /start ya está manejado
   if (msg.text && msg.text.startsWith('/')) return;
 
   const chatId = msg.chat.id;
   const fromId = msg.from.id.toString();
   const text = (msg.text || '').trim().toLowerCase();
 
-  // Validación básica de correo
+  // Validación rápida de email
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
-    return bot.sendMessage(chatId, '⚠️ Eso no parece un correo válido. Intenta de nuevo.');
+    return bot.sendMessage(chatId, '⚠️ Ese no parece un correo válido. Intenta de nuevo.');
   }
 
   try {
-    // Buscar cliente por email
+    // 1) Cliente por email
     const customers = await stripe.customers.list({ email: text, limit: 1 });
     if (customers.data.length === 0) {
-      return bot.sendMessage(
-        chatId,
-        '❌ No encontré ninguna suscripción con ese correo. Verifica y vuelve a intentar.'
-      );
+      return bot.sendMessage(chatId, '❌ No encontré una suscripción con ese correo.');
     }
-
     const customer = customers.data[0];
 
-    // Verificar suscripción activa
+    // 2) Suscripción activa
     const subs = await stripe.subscriptions.list({
       customer: customer.id,
       status: 'active',
       limit: 1
     });
-
     if (subs.data.length === 0) {
-      return bot.sendMessage(
-        chatId,
-        '⚠️ Tu suscripción no está activa. Si acabas de pagar, espera 1–2 minutos y vuelve a intentar.'
-      );
+      return bot.sendMessage(chatId, '⚠️ Tu suscripción no está activa. Si pagaste recién, espera 1–2 min y reintenta.');
     }
 
-    // Marcar como verificado en RAM
+    // 3) Marcar verificado
     verifiedUserIds.add(fromId);
 
-    // Guardar mapping en Stripe (para expulsión futura por webhook)
+    // 4) Guardar mapeo en metadata (para expulsar con webhook)
     const meta = customer.metadata || {};
     if (meta.telegram_user_id !== fromId) {
       await stripe.customers.update(customer.id, {
@@ -109,10 +101,10 @@ bot.on('message', async (msg) => {
       });
     }
 
-    // Dar link de solicitud de unión (join request)
+    // 5) Enviar link de solicitud (join request)
     await ensureInviteLink();
     if (!inviteLink) {
-      return bot.sendMessage(chatId, '⚠️ No pude generar el enlace de acceso. Intenta de nuevo en un momento.');
+      return bot.sendMessage(chatId, '⚠️ No pude generar el enlace. Intenta nuevamente.');
     }
 
     await bot.sendMessage(
@@ -122,21 +114,20 @@ bot.on('message', async (msg) => {
     );
   } catch (err) {
     console.error('Error verificando suscripción:', err);
-    bot.sendMessage(chatId, '❌ Ocurrió un error al verificar. Intenta nuevamente en unos segundos.');
+    bot.sendMessage(chatId, '❌ Ocurrió un error al verificar. Intenta otra vez en unos segundos.');
   }
 });
 
-// Aprobar/rechazar join request
+// Aprobación/rechazo de solicitudes
 bot.on('chat_join_request', async (update) => {
   try {
     const userId = update.from.id.toString();
-
     if (verifiedUserIds.has(userId)) {
       await bot.approveChatJoinRequest(CHANNEL_ID, update.from.id);
       await bot.sendMessage(userId, '🎉 Acceso concedido. ¡Bienvenido al canal privado Investe.pro!');
     } else {
       await bot.declineChatJoinRequest(CHANNEL_ID, update.from.id);
-      await bot.sendMessage(userId, '❌ Debes verificar tu suscripción. Escribe /start y envía tu correo de Stripe.');
+      await bot.sendMessage(userId, '❌ Verifica tu suscripción enviando tu correo con /start.');
     }
   } catch (e) {
     console.error('Error en chat_join_request:', e);
@@ -172,7 +163,7 @@ async function stripeWebhook(req, res) {
             await bot.unbanChatMember(CHANNEL_ID, Number(tgId));
             await bot.sendMessage(
               tgId,
-              '🚫 Tu suscripción no está activa. Te hemos retirado del canal. Si renuevas, vuelve a verificar enviando tu correo con /start.'
+              '🚫 Tu suscripción no está activa. Te retiramos del canal. Si renuevas, vuelve a verificar con /start.'
             );
           } catch (kickErr) {
             console.error('Error expulsando usuario:', kickErr);
