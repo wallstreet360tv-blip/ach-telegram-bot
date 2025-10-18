@@ -1,4 +1,3 @@
-
 {
   "name": "ach-telegram-bot",
   "version": "1.0.0",
@@ -9,7 +8,7 @@
     "start": "node server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",
