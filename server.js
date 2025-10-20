@@ -135,7 +135,7 @@ app.get('/join', async (req, res) => {
     const deepLink = `https://t.me/${BOT_USERNAME}?start=join_${joinToken}`;
     const deepLinkNative = `tg://resolve?domain=${BOT_USERNAME}&start=join_${joinToken}`;
 
-    // Página con auto-apertura + fallback automático + botón de reintento + "copiar comando"
+    // Página con auto-apertura + fallback + botón de reintento + "copiar comando"
     res.send(`
       <html>
         <head>
@@ -198,15 +198,49 @@ app.get('/join', async (req, res) => {
   }
 });
 
-// ====== Texto común (aviso legal y soporte) ======
-const DISCLAIMER = [
-  '⚠️ *Aviso legal*: Este canal es estrictamente **educativo**.',
-  'No constituye asesoramiento financiero ni recomendación de inversión.',
-  'Al solicitar acceso y participar en el canal, aceptas estos términos.'
-].join('\\n');
+// ====== Textos y helpers de envío bonito ======
+const DISCLAIMER_HTML = [
+  '⚠️ <b>Aviso importante</b>',
+  'Este canal es estrictamente <b>educativo</b> y no constituye asesoramiento financiero ni recomendación de inversión.',
+  'Al continuar y solicitar el acceso, <b>aceptas nuestros términos y condiciones</b>.'
+].join('\n');
 
-const SUPPORT_LINE = '¿Necesitas ayuda? Soporte: *786 677 5827* (llamada/WhatsApp).';
-const PORTAL_LINE  = 'Para *gestionar o cancelar* tu suscripción en cualquier momento, usa */portal*.';
+const SUPPORT_LINE_TXT = '📞 Soporte (llamadas o SMS): 786 677 5827';
+
+function sendAccessFlow(chatId, inviteLink) {
+  // 1) Bienvenida + aviso + botón de acceso
+  bot.sendMessage(
+    chatId,
+    [
+      '<b>Bienvenido a Investe.pro</b>',
+      '',
+      DISCLAIMER_HTML
+    ].join('\n'),
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[ { text: '🔓 Solicitar acceso al canal', url: inviteLink } ]]
+      }
+    }
+  );
+
+  // 2) Portal (vía comando)
+  bot.sendMessage(
+    chatId,
+    '🔧 Para gestionar o cancelar tu suscripción en cualquier momento, utiliza el comando <code>/portal</code>.',
+    {
+      parse_mode: 'HTML',
+      reply_markup: {
+        keyboard: [[ { text: '/portal' } ]],
+        resize_keyboard: true,
+        one_time_keyboard: true
+      }
+    }
+  );
+
+  // 3) Soporte (solo llamadas/SMS)
+  bot.sendMessage(chatId, SUPPORT_LINE_TXT);
+}
 
 // ====== Telegram: /start con token join_XXXX + fallbacks ======
 bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
@@ -218,7 +252,7 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
     if (join) {
       const row = getByToken.get(join);
       if (!row) {
-        // Fallback: si ya está vinculado y activo, re-envía invite
+        // Fallback: si ya está vinculado y activo, re-envía invite con el flujo bonito
         const linked = getByTg.get(msg.from.id);
         if (linked && (linked.status === 'active' || linked.status === 'trialing')) {
           const invite = await bot.createChatInviteLink(CHANNEL_ID, {
@@ -226,13 +260,8 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
             name: `Access for tg:${msg.from.id}`,
             expire_date: Math.floor(Date.now()/1000) + 60*60*24
           });
-          return bot.sendMessage(
-            chatId,
-            '🔁 Tu token expiró, pero ya estás vinculado. Aquí tienes tu acceso:\\n' +
-            invite.invite_link + '\\n\\n' +
-            `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
-            { parse_mode: 'Markdown' }
-          );
+          sendAccessFlow(chatId, invite.invite_link);
+          return;
         }
         return bot.sendMessage(chatId, '❌ Token inválido o usado. Si ya pagaste, vuelve al enlace /join para generar uno nuevo.');
       }
@@ -247,17 +276,12 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
         expire_date: Math.floor(Date.now() / 1000) + 60 * 60 * 24 // 24h
       });
 
-      return bot.sendMessage(
-        chatId,
-        '✅ Todo listo.\\n\\nToca este enlace para **solicitar acceso** al canal privado:\\n' +
-        invite.invite_link +
-        '\\n\\n' +
-        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
-        { parse_mode: 'Markdown' }
-      );
+      // Enviar flujo formateado
+      sendAccessFlow(chatId, invite.invite_link);
+      return;
     }
 
-    // Sin token: si ya está vinculado y activo, dale acceso directo
+    // Sin token: si ya está vinculado y activo, acceso directo con el mismo flujo
     const linked = getByTg.get(msg.from.id);
     if (linked && (linked.status === 'active' || linked.status === 'trialing')) {
       const invite = await bot.createChatInviteLink(CHANNEL_ID, {
@@ -265,18 +289,14 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
         name: `Access for tg:${msg.from.id}`,
         expire_date: Math.floor(Date.now()/1000) + 60*60*24
       });
-      return bot.sendMessage(
-        chatId,
-        '🔓 Acceso directo:\\n' + invite.invite_link + '\\n\\n' +
-        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
-        { parse_mode: 'Markdown' }
-      );
+      sendAccessFlow(chatId, invite.invite_link);
+      return;
     }
 
     // Mensaje genérico si entra sin token y no está vinculado
     return bot.sendMessage(
       chatId,
-      '👋 Hola. Para activar tu acceso, completa el pago y usa el botón que te llevamos a Telegram.\\n\\nSi ya pagaste, vuelve al enlace que te dimos después del pago.'
+      '👋 Hola. Para activar tu acceso, completa el pago y usa el botón que te llevamos a Telegram.\n\nSi ya pagaste, vuelve al enlace que te dimos después del pago.'
     );
   } catch (e) {
     console.error(e);
@@ -294,12 +314,23 @@ bot.on('chat_join_request', async (req) => {
     const row = getByTg.get(userId);
     if (row && (row.status === 'active' || row.status === 'trialing')) {
       await bot.approveChatJoinRequest(CHANNEL_ID, userId);
+
+      // Bienvenida en mensajes separados y claros
+      await bot.sendMessage(userId, '🎉 Acceso aprobado. ¡Bienvenido al canal!', { parse_mode: 'HTML' });
+      await bot.sendMessage(userId, DISCLAIMER_HTML, { parse_mode: 'HTML' });
       await bot.sendMessage(
         userId,
-        '🎉 Acceso aprobado. ¡Bienvenido al canal!\\n\\n' +
-        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
-        { parse_mode: 'Markdown' }
+        '🔧 Para gestionar o cancelar tu suscripción en cualquier momento, escribe <code>/portal</code>.',
+        {
+          parse_mode: 'HTML',
+          reply_markup: {
+            keyboard: [[ { text: '/portal' } ]],
+            resize_keyboard: true,
+            one_time_keyboard: true
+          }
+        }
       );
+      await bot.sendMessage(userId, SUPPORT_LINE_TXT);
     } else {
       await bot.declineChatJoinRequest(CHANNEL_ID, userId);
       await bot.sendMessage(userId, '❌ No tienes una suscripción activa. Verifica tu pago y vuelve a intentarlo.');
@@ -318,24 +349,20 @@ bot.onText(/^\/portal$/i, async (msg) => {
       customer: row.stripe_customer_id,
       return_url: PORTAL_RETURN_URL || SERVER_URL
     });
-    bot.sendMessage(msg.chat.id, `🔧 Gestiona tu suscripción aquí:\\n${session.url}`);
+    bot.sendMessage(msg.chat.id, `🔧 Gestiona tu suscripción aquí:\n${session.url}`);
   } catch (e) {
     console.error(e);
     bot.sendMessage(msg.chat.id, 'No pude generar tu portal ahora. Intenta luego.');
   }
 });
 
-// ====== Comandos utilitarios: /aviso y /soporte ======
+// ====== Comandos utilitarios ======
 bot.onText(/^\/(aviso|disclaimer|terms)$/i, async (msg) => {
-  bot.sendMessage(msg.chat.id, DISCLAIMER, { parse_mode: 'Markdown' });
+  bot.sendMessage(msg.chat.id, DISCLAIMER_HTML, { parse_mode: 'HTML' });
 });
 
 bot.onText(/^\/(soporte|ayuda|help)$/i, async (msg) => {
-  bot.sendMessage(
-    msg.chat.id,
-    `${SUPPORT_LINE}\\n\\n${PORTAL_LINE}`,
-    { parse_mode: 'Markdown' }
-  );
+  bot.sendMessage(msg.chat.id, `${SUPPORT_LINE_TXT}\n\nEscribe /portal para gestionar tu suscripción.`);
 });
 
 // ====== Stripe Webhooks ======
@@ -392,7 +419,6 @@ async function handleStripeWebhook(req, res) {
           status: 'past_due',
           current_period_end: null
         });
-        // Revocar acceso si estaba dentro
         const row = getByCustomer.get(customerId);
         if (row && row.tg_user_id) await kickFromChannel(row.tg_user_id);
         console.log('💥 invoice.payment_failed → acceso revocado');
@@ -416,7 +442,6 @@ async function handleStripeWebhook(req, res) {
         break;
       }
       default:
-        // otros eventos ignorados
         break;
     }
 
@@ -437,7 +462,7 @@ async function kickFromChannel(tg_user_id) {
   }
 }
 
-// ====== Salud y JSON para el resto de rutas ======
+// ====== Salud ======
 app.use(express.json());
 app.get('/', (_req, res) => res.send('OK - Stripe + Telegram (sin emails)'));
 
