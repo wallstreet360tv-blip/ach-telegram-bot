@@ -131,10 +131,11 @@ app.get('/join', async (req, res) => {
     } catch (_) {}
 
     // Enlaces al bot: nativo (app) + alternativo (web)
+    const startCmd = `/start join_${joinToken}`;
     const deepLink = `https://t.me/${BOT_USERNAME}?start=join_${joinToken}`;
     const deepLinkNative = `tg://resolve?domain=${BOT_USERNAME}&start=join_${joinToken}`;
 
-    // Página con botón + fallback automático + reintento
+    // Página con auto-apertura + fallback automático + botón de reintento + "copiar comando"
     res.send(`
       <html>
         <head>
@@ -142,20 +143,28 @@ app.get('/join', async (req, res) => {
           <meta name="viewport" content="width=device-width, initial-scale=1" />
           <title>Investe.pro — Acceso</title>
           <style>
+            :root { color-scheme: dark; }
             body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}
-            .card{background:#111827;padding:28px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:520px;text-align:center}
-            a.btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;background:#0088cc;color:#fff;font-weight:600}
+            .card{background:#111827;padding:28px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:560px;text-align:center}
+            .btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;background:#0088cc;color:#fff;font-weight:600}
+            .btn.secondary{background:#334155}
             .muted{opacity:.85;font-size:14px;margin-top:12px}
             .sp{height:1px;background:#1f2937;margin:18px 0}
             .link{color:#93c5fd}
+            .code{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;background:#0b1220;padding:8px 10px;border-radius:8px;display:inline-block}
+            .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#16a34a;color:#fff;padding:10px 14px;border-radius:10px;display:none}
           </style>
           <script>
             function openTelegram(){
-              // Intento nativo
               window.location.href='${deepLinkNative}';
-              // Fallback automático al enlace web si la app no abre en ~900ms
               setTimeout(function(){ window.location.href='${deepLink}'; }, 900);
             }
+            function copyStart(){
+              navigator.clipboard.writeText('${startCmd}')
+                .then(()=>{ const t=document.getElementById('toast'); t.style.display='block'; setTimeout(()=>t.style.display='none',1300); })
+                .catch(()=>{ alert('Copia manual: ${startCmd}'); });
+            }
+            document.addEventListener('DOMContentLoaded', function(){ setTimeout(openTelegram, 300); });
           </script>
         </head>
         <body>
@@ -165,17 +174,21 @@ app.get('/join', async (req, res) => {
 
             <p><a class="btn" href="#" onclick="openTelegram();return false;">Abrir en Telegram</a></p>
 
-            <p class="muted">
-              ¿No se abrió? <a class="link" href="#" onclick="openTelegram();return false;">Reintentar abrir Telegram</a>
+            <p class="muted">¿No se abrió?
+              <a class="link" href="#" onclick="openTelegram();return false;">Reintentar abrir Telegram</a>
             </p>
 
-            <p class="muted">
-              Si al abrir Telegram no ves el mensaje del bot, toca el botón <b>Start</b> (Comenzar) que aparece abajo.<br/>
-              Si sigues sin verlo, usa este <a class="link" href="${deepLink}">enlace alternativo</a>.
-            </p>
+            <div class="sp"></div>
+
+            <p class="muted">Si al abrir Telegram no ves el mensaje del bot, toca el botón <b>Start</b> (Comenzar) que aparece abajo.</p>
+            <p class="muted">Plan C (si nada abre): copia este comando, pégalo en el chat del bot y envíalo:</p>
+            <p class="code">${startCmd}</p><br/>
+            <p><a class="btn secondary" href="#" onclick="copyStart();return false;">Copiar comando</a></p>
+            <p class="muted">También puedes usar este <a class="link" href="${deepLink}">enlace alternativo</a>.</p>
 
             ${portalUrl ? `<div class="sp"></div><p class="muted">¿Necesitas gestionar tu suscripción?<br/><a class="link" href="${portalUrl}" target="_blank" rel="noopener">Abrir portal de cliente</a></p>` : ``}
           </div>
+          <div id="toast" class="toast">Comando copiado ✅</div>
         </body>
       </html>
     `);
@@ -184,6 +197,16 @@ app.get('/join', async (req, res) => {
     res.status(500).send('Error interno verificando el pago.');
   }
 });
+
+// ====== Texto común (aviso legal y soporte) ======
+const DISCLAIMER = [
+  '⚠️ *Aviso legal*: Este canal es estrictamente **educativo**.',
+  'No constituye asesoramiento financiero ni recomendación de inversión.',
+  'Al solicitar acceso y participar en el canal, aceptas estos términos.'
+].join('\\n');
+
+const SUPPORT_LINE = '¿Necesitas ayuda? Soporte: *786 677 5827* (llamada/WhatsApp).';
+const PORTAL_LINE  = 'Para *gestionar o cancelar* tu suscripción en cualquier momento, usa */portal*.';
 
 // ====== Telegram: /start con token join_XXXX + fallbacks ======
 bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
@@ -203,7 +226,13 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
             name: `Access for tg:${msg.from.id}`,
             expire_date: Math.floor(Date.now()/1000) + 60*60*24
           });
-          return bot.sendMessage(chatId, '🔁 Tu token expiró, pero ya estás vinculado. Aquí tienes tu acceso:\n' + invite.invite_link);
+          return bot.sendMessage(
+            chatId,
+            '🔁 Tu token expiró, pero ya estás vinculado. Aquí tienes tu acceso:\\n' +
+            invite.invite_link + '\\n\\n' +
+            `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
+            { parse_mode: 'Markdown' }
+          );
         }
         return bot.sendMessage(chatId, '❌ Token inválido o usado. Si ya pagaste, vuelve al enlace /join para generar uno nuevo.');
       }
@@ -220,9 +249,11 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
 
       return bot.sendMessage(
         chatId,
-        '✅ Todo listo.\n\nToca este enlace para **solicitar acceso** al canal privado:\n' +
+        '✅ Todo listo.\\n\\nToca este enlace para **solicitar acceso** al canal privado:\\n' +
         invite.invite_link +
-        '\n\nEl bot aprobará tu solicitud automáticamente si tu suscripción está activa.'
+        '\\n\\n' +
+        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
+        { parse_mode: 'Markdown' }
       );
     }
 
@@ -234,13 +265,18 @@ bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
         name: `Access for tg:${msg.from.id}`,
         expire_date: Math.floor(Date.now()/1000) + 60*60*24
       });
-      return bot.sendMessage(chatId, '🔓 Acceso directo:\n' + invite.invite_link);
+      return bot.sendMessage(
+        chatId,
+        '🔓 Acceso directo:\\n' + invite.invite_link + '\\n\\n' +
+        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
+        { parse_mode: 'Markdown' }
+      );
     }
 
     // Mensaje genérico si entra sin token y no está vinculado
     return bot.sendMessage(
       chatId,
-      '👋 Hola. Para activar tu acceso, completa el pago y usa el botón que te llevamos a Telegram.\n\nSi ya pagaste, vuelve al enlace que te dimos después del pago.'
+      '👋 Hola. Para activar tu acceso, completa el pago y usa el botón que te llevamos a Telegram.\\n\\nSi ya pagaste, vuelve al enlace que te dimos después del pago.'
     );
   } catch (e) {
     console.error(e);
@@ -258,7 +294,12 @@ bot.on('chat_join_request', async (req) => {
     const row = getByTg.get(userId);
     if (row && (row.status === 'active' || row.status === 'trialing')) {
       await bot.approveChatJoinRequest(CHANNEL_ID, userId);
-      await bot.sendMessage(userId, '🎉 Acceso aprobado. ¡Bienvenido al canal!');
+      await bot.sendMessage(
+        userId,
+        '🎉 Acceso aprobado. ¡Bienvenido al canal!\\n\\n' +
+        `${DISCLAIMER}\\n\\n${PORTAL_LINE}\\n${SUPPORT_LINE}`,
+        { parse_mode: 'Markdown' }
+      );
     } else {
       await bot.declineChatJoinRequest(CHANNEL_ID, userId);
       await bot.sendMessage(userId, '❌ No tienes una suscripción activa. Verifica tu pago y vuelve a intentarlo.');
@@ -277,11 +318,24 @@ bot.onText(/^\/portal$/i, async (msg) => {
       customer: row.stripe_customer_id,
       return_url: PORTAL_RETURN_URL || SERVER_URL
     });
-    bot.sendMessage(msg.chat.id, `🔧 Gestiona tu suscripción aquí:\n${session.url}`);
+    bot.sendMessage(msg.chat.id, `🔧 Gestiona tu suscripción aquí:\\n${session.url}`);
   } catch (e) {
     console.error(e);
     bot.sendMessage(msg.chat.id, 'No pude generar tu portal ahora. Intenta luego.');
   }
+});
+
+// ====== Comandos utilitarios: /aviso y /soporte ======
+bot.onText(/^\/(aviso|disclaimer|terms)$/i, async (msg) => {
+  bot.sendMessage(msg.chat.id, DISCLAIMER, { parse_mode: 'Markdown' });
+});
+
+bot.onText(/^\/(soporte|ayuda|help)$/i, async (msg) => {
+  bot.sendMessage(
+    msg.chat.id,
+    `${SUPPORT_LINE}\\n\\n${PORTAL_LINE}`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
 // ====== Stripe Webhooks ======
