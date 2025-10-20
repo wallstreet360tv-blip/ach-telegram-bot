@@ -88,7 +88,7 @@ app.post('/telegram-webhook', express.json(), async (req, res) => {
   catch (e) { console.error('processUpdate error:', e); }
 });
 
-// ====== Paso clave del nuevo flujo: /join ======
+// ====== /join — redirección desde Stripe ======
 // Stripe redirige aquí: /join?session_id={CHECKOUT_SESSION_ID}
 app.get('/join', async (req, res) => {
   const sessionId = req.query.session_id;
@@ -130,7 +130,9 @@ app.get('/join', async (req, res) => {
       portalUrl = portal.url;
     } catch (_) {}
 
+    // Enlaces al bot: nativo (app) + alternativo (web)
     const deepLink = `https://t.me/${BOT_USERNAME}?start=join_${joinToken}`;
+    const deepLinkNative = `tg://resolve?domain=${BOT_USERNAME}&start=join_${joinToken}`;
 
     // Página simple con botón “Abrir en Telegram”
     res.send(`
@@ -143,7 +145,7 @@ app.get('/join', async (req, res) => {
             body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0f172a;color:#e2e8f0}
             .card{background:#111827;padding:28px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.35);max-width:520px;text-align:center}
             a.btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;background:#0088cc;color:#fff;font-weight:600}
-            .muted{opacity:.8;font-size:14px;margin-top:12px}
+            .muted{opacity:.85;font-size:14px;margin-top:12px}
             .sp{height:1px;background:#1f2937;margin:18px 0}
             .link{color:#93c5fd}
           </style>
@@ -152,7 +154,11 @@ app.get('/join', async (req, res) => {
           <div class="card">
             <h2>✅ Pago verificado</h2>
             <p>Ahora completa tu acceso desde Telegram.</p>
-            <p><a class="btn" href="${deepLink}">Abrir en Telegram</a></p>
+            <p><a class="btn" href="${deepLinkNative}">Abrir en Telegram</a></p>
+            <p class="muted">
+              Si al abrir Telegram no ves el mensaje del bot, toca el botón <b>Start</b> (Comenzar) que aparece abajo.<br/>
+              Si sigues sin verlo, usa este <a class="link" href="${deepLink}">enlace alternativo</a>.
+            </p>
             ${portalUrl ? `<div class="sp"></div><p class="muted">¿Necesitas gestionar tu suscripción?<br/><a class="link" href="${portalUrl}" target="_blank" rel="noopener">Abrir portal de cliente</a></p>` : ``}
           </div>
         </body>
@@ -164,38 +170,62 @@ app.get('/join', async (req, res) => {
   }
 });
 
-// ====== Telegram: /start con token join_XXXX ======
+// ====== Telegram: /start con token join_XXXX + fallbacks ======
 bot.onText(/^\/start(?:\s+|)(.*)?$/i, async (msg, match) => {
   const chatId = msg.chat.id;
   const param = (match && match[1] ? match[1].trim() : '') || '';
   const join = param.startsWith('join_') ? param.slice('join_'.length) : null;
 
   try {
-    if (!join) {
-      // Mensaje genérico si entran sin token
-      return bot.sendMessage(chatId,
-        '👋 Hola. Para activar tu acceso, primero completa el pago y usa el botón que te llevamos a Telegram.\n\nSi ya pagaste, vuelve al enlace que te dimos después del pago.');
+    if (join) {
+      const row = getByToken.get(join);
+      if (!row) {
+        // Fallback: si ya está vinculado y activo, re-envía invite
+        const linked = getByTg.get(msg.from.id);
+        if (linked && (linked.status === 'active' || linked.status === 'trialing')) {
+          const invite = await bot.createChatInviteLink(CHANNEL_ID, {
+            creates_join_request: true,
+            name: `Access for tg:${msg.from.id}`,
+            expire_date: Math.floor(Date.now()/1000) + 60*60*24
+          });
+          return bot.sendMessage(chatId, '🔁 Tu token expiró, pero ya estás vinculado. Aquí tienes tu acceso:\n' + invite.invite_link);
+        }
+        return bot.sendMessage(chatId, '❌ Token inválido o usado. Si ya pagaste, vuelve al enlace /join para generar uno nuevo.');
+      }
+
+      // Vincular Telegram a ese cliente y consumir el token
+      setTgByToken.run({ tg_user_id: msg.from.id, join_token: join });
+
+      // Crear enlace de invitación con solicitud de ingreso
+      const invite = await bot.createChatInviteLink(CHANNEL_ID, {
+        creates_join_request: true,
+        name: `Access for tg:${msg.from.id}`,
+        expire_date: Math.floor(Date.now() / 1000) + 60 * 60 * 24 // 24h
+      });
+
+      return bot.sendMessage(
+        chatId,
+        '✅ Todo listo.\n\nToca este enlace para **solicitar acceso** al canal privado:\n' +
+        invite.invite_link +
+        '\n\nEl bot aprobará tu solicitud automáticamente si tu suscripción está activa.'
+      );
     }
 
-    const row = getByToken.get(join);
-    if (!row) {
-      return bot.sendMessage(chatId, '❌ Token inválido o usado. Si ya pagaste, vuelve al enlace /join para generar uno nuevo.');
+    // Sin token: si ya está vinculado y activo, dale acceso directo
+    const linked = getByTg.get(msg.from.id);
+    if (linked && (linked.status === 'active' || linked.status === 'trialing')) {
+      const invite = await bot.createChatInviteLink(CHANNEL_ID, {
+        creates_join_request: true,
+        name: `Access for tg:${msg.from.id}`,
+        expire_date: Math.floor(Date.now()/1000) + 60*60*24
+      });
+      return bot.sendMessage(chatId, '🔓 Acceso directo:\n' + invite.invite_link);
     }
 
-    // Vincular Telegram a ese cliente y consumir el token
-    setTgByToken.run({ tg_user_id: msg.from.id, join_token: join });
-
-    // Crear enlace de invitación con solicitud de ingreso
-    const invite = await bot.createChatInviteLink(CHANNEL_ID, {
-      creates_join_request: true,
-      name: `Access for tg:${msg.from.id}`,
-      expire_date: Math.floor(Date.now() / 1000) + 60 * 60 * 24 // 24h
-    });
-
-    await bot.sendMessage(chatId,
-      '✅ Todo listo.\n\nToca este enlace para **solicitar acceso** al canal privado:\n' +
-      invite.invite_link +
-      '\n\nEl bot aprobará tu solicitud automáticamente si tu suscripción está activa.'
+    // Mensaje genérico si entra sin token y no está vinculado
+    return bot.sendMessage(
+      chatId,
+      '👋 Hola. Para activar tu acceso, completa el pago y usa el botón que te llevamos a Telegram.\n\nSi ya pagaste, vuelve al enlace que te dimos después del pago.'
     );
   } catch (e) {
     console.error(e);
