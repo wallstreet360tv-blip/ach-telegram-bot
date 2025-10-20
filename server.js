@@ -134,7 +134,7 @@ app.get('/join', async (req, res) => {
     const deepLink = `https://t.me/${BOT_USERNAME}?start=join_${joinToken}`;
     const deepLinkNative = `tg://resolve?domain=${BOT_USERNAME}&start=join_${joinToken}`;
 
-    // Página simple con botón “Abrir en Telegram”
+    // Página con botón + fallback automático + reintento
     res.send(`
       <html>
         <head>
@@ -149,16 +149,31 @@ app.get('/join', async (req, res) => {
             .sp{height:1px;background:#1f2937;margin:18px 0}
             .link{color:#93c5fd}
           </style>
+          <script>
+            function openTelegram(){
+              // Intento nativo
+              window.location.href='${deepLinkNative}';
+              // Fallback automático al enlace web si la app no abre en ~900ms
+              setTimeout(function(){ window.location.href='${deepLink}'; }, 900);
+            }
+          </script>
         </head>
         <body>
           <div class="card">
             <h2>✅ Pago verificado</h2>
             <p>Ahora completa tu acceso desde Telegram.</p>
-            <p><a class="btn" href="${deepLinkNative}">Abrir en Telegram</a></p>
+
+            <p><a class="btn" href="#" onclick="openTelegram();return false;">Abrir en Telegram</a></p>
+
+            <p class="muted">
+              ¿No se abrió? <a class="link" href="#" onclick="openTelegram();return false;">Reintentar abrir Telegram</a>
+            </p>
+
             <p class="muted">
               Si al abrir Telegram no ves el mensaje del bot, toca el botón <b>Start</b> (Comenzar) que aparece abajo.<br/>
               Si sigues sin verlo, usa este <a class="link" href="${deepLink}">enlace alternativo</a>.
             </p>
+
             ${portalUrl ? `<div class="sp"></div><p class="muted">¿Necesitas gestionar tu suscripción?<br/><a class="link" href="${portalUrl}" target="_blank" rel="noopener">Abrir portal de cliente</a></p>` : ``}
           </div>
         </body>
