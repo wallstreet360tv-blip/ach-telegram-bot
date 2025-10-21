@@ -60,12 +60,12 @@ ON CONFLICT(stripe_customer_id) DO UPDATE SET
   current_period_end=excluded.current_period_end,
   updated_at=strftime('%s','now')
 `);
-const setJoinTokenByCustomer = db.prepare(`UPDATE subscribers SET join_token=@join_token, updated_at=strftime('%s','now') WHERE stripe_customer_id=@stripe_customer_id`);
-const setTgByToken = db.prepare(`UPDATE subscribers SET tg_user_id=@tg_user_id, join_token=NULL, updated_at=strftime('%s','now') WHERE join_token=@join_token`);
-const getByToken = db.prepare(`SELECT * FROM subscribers WHERE join_token=?`);
-const getByCustomer = db.prepare(`SELECT * FROM subscribers WHERE stripe_customer_id=?`);
-const getByTg = db.prepare(`SELECT * FROM subscribers WHERE tg_user_id=?`);
-const setStatusPeriod = db.prepare(`UPDATE subscribers SET status=@status, current_period_end=@current_period_end, updated_at=strftime('%s','now') WHERE stripe_customer_id=@stripe_customer_id`);
+const setJoinTokenByCustomer = db.prepare(\`UPDATE subscribers SET join_token=@join_token, updated_at=strftime('%s','now') WHERE stripe_customer_id=@stripe_customer_id\`);
+const setTgByToken = db.prepare(\`UPDATE subscribers SET tg_user_id=@tg_user_id, join_token=NULL, updated_at=strftime('%s','now') WHERE join_token=@join_token\`);
+const getByToken = db.prepare(\`SELECT * FROM subscribers WHERE join_token=?\`);
+const getByCustomer = db.prepare(\`SELECT * FROM subscribers WHERE stripe_customer_id=?\`);
+const getByTg = db.prepare(\`SELECT * FROM subscribers WHERE tg_user_id=?\`);
+const setStatusPeriod = db.prepare(\`UPDATE subscribers SET status=@status, current_period_end=@current_period_end, updated_at=strftime('%s','now') WHERE stripe_customer_id=@stripe_customer_id\`);
 
 function genToken() {
   return crypto.randomBytes(16).toString('hex');
@@ -73,7 +73,7 @@ function genToken() {
 
 // ====== Telegram Webhook ======
 async function setTelegramWebhook() {
-  const url = `${SERVER_URL}/telegram-webhook`;
+  const url = \`\${SERVER_URL}/telegram-webhook\`;
   try {
     const res = await bot.setWebHook(url);
     console.log('✅ Telegram webhook OK →', res);
@@ -131,12 +131,12 @@ app.get('/join', async (req, res) => {
     } catch (_) {}
 
     // Enlaces al bot: nativo (app) + alternativo (web)
-    const startCmd = `/start join_${joinToken}`;
-    const deepLink = `https://t.me/${BOT_USERNAME}?start=join_${joinToken}`;
-    const deepLinkNative = `tg://resolve?domain=${BOT_USERNAME}&start=join_${joinToken}`;
+    const startCmd = \`/start join_\${joinToken}\`;
+    const deepLink = \`https://t.me/\${BOT_USERNAME}?start=join_\${joinToken}\`;
+    const deepLinkNative = \`tg://resolve?domain=\${BOT_USERNAME}&start=join_\${joinToken}\`;
 
     // Página con auto-apertura + fallback + botón de reintento + "copiar comando"
-    res.send(`
+    res.send(\`
       <html>
         <head>
           <meta charset="utf-8" />
@@ -191,7 +191,7 @@ app.get('/join', async (req, res) => {
           <div id="toast" class="toast">Comando copiado ✅</div>
         </body>
       </html>
-    `);
+    \`);
   } catch (err) {
     console.error('Error en /join:', err);
     res.status(500).send('Error interno verificando el pago.');
@@ -205,14 +205,14 @@ const DISCLAIMER_HTML = [
   'Al continuar y solicitar el acceso, <b>aceptas nuestros términos y condiciones</b>.'
 ].join('\n');
 
-const SUPPORT_LINE_TXT = '📞 Soporte (llamadas o SMS): 786 677 5827';
+const SUPPORT_PHONE = '786 677 5827';
 
 function sendAccessFlow(chatId, inviteLink) {
   // 1) Bienvenida + aviso + botón de acceso
   bot.sendMessage(
     chatId,
     [
-      '<b>Bienvenido a Investe.pro</b>',
+      '<b>Bienvenido a <a href="https://t.me/'+BOT_USERNAME+'">Investe.pro</a></b>',
       '',
       DISCLAIMER_HTML
     ].join('\n'),
@@ -224,22 +224,19 @@ function sendAccessFlow(chatId, inviteLink) {
     }
   );
 
-  // 2) Portal (vía comando)
+  // 2) Portal (vía comando) + Soporte como botón separado
   bot.sendMessage(
     chatId,
     '🔧 Para gestionar o cancelar tu suscripción en cualquier momento, utiliza el comando <code>/portal</code>.',
     {
       parse_mode: 'HTML',
       reply_markup: {
-        keyboard: [[ { text: '/portal' } ]],
+        keyboard: [[ { text: '/portal' }, { text: 'Soporte' } ]],
         resize_keyboard: true,
-        one_time_keyboard: true
+        one_time_keyboard: false
       }
     }
   );
-
-  // 3) Soporte (solo llamadas/SMS)
-  bot.sendMessage(chatId, SUPPORT_LINE_TXT);
 }
 
 // ====== Telegram: /start con token join_XXXX + fallbacks ======
@@ -315,8 +312,31 @@ bot.on('chat_join_request', async (req) => {
     if (row && (row.status === 'active' || row.status === 'trialing')) {
       await bot.approveChatJoinRequest(CHANNEL_ID, userId);
 
-      // Bienvenida en mensajes separados y claros
-      await bot.sendMessage(userId, '🎉 Acceso aprobado. ¡Bienvenido al canal!', { parse_mode: 'HTML' });
+      // Crear un link directo para ENTRAR (sin solicitud)
+      let enterLink;
+      try {
+        const direct = await bot.createChatInviteLink(CHANNEL_ID, {
+          creates_join_request: false,               // directo
+          name: `Enter for tg:${userId}`,
+          expire_date: Math.floor(Date.now()/1000) + 60*60*6 // 6h
+        });
+        enterLink = direct.invite_link;
+      } catch {
+        // fallback: si Telegram obligara a solicitud, reutilizamos el que usó el usuario
+        enterLink = (req.invite_link && req.invite_link.invite_link) ? req.invite_link.invite_link : null;
+      }
+
+      // Bienvenida + botón ENTRAR
+      await bot.sendMessage(
+        userId,
+        '🎉 <b>Acceso aprobado</b>. ¡Bienvenido al canal!',
+        {
+          parse_mode: 'HTML',
+          reply_markup: enterLink ? {
+            inline_keyboard: [[ { text: '➡️ Entrar al canal', url: enterLink } ]]
+          } : undefined
+        }
+      );
       await bot.sendMessage(userId, DISCLAIMER_HTML, { parse_mode: 'HTML' });
       await bot.sendMessage(
         userId,
@@ -324,13 +344,12 @@ bot.on('chat_join_request', async (req) => {
         {
           parse_mode: 'HTML',
           reply_markup: {
-            keyboard: [[ { text: '/portal' } ]],
+            keyboard: [[ { text: '/portal' }, { text: 'Soporte' } ]],
             resize_keyboard: true,
-            one_time_keyboard: true
+            one_time_keyboard: false
           }
         }
       );
-      await bot.sendMessage(userId, SUPPORT_LINE_TXT);
     } else {
       await bot.declineChatJoinRequest(CHANNEL_ID, userId);
       await bot.sendMessage(userId, '❌ No tienes una suscripción activa. Verifica tu pago y vuelve a intentarlo.');
@@ -356,13 +375,24 @@ bot.onText(/^\/portal$/i, async (msg) => {
   }
 });
 
-// ====== Comandos utilitarios ======
-bot.onText(/^\/(aviso|disclaimer|terms)$/i, async (msg) => {
-  bot.sendMessage(msg.chat.id, DISCLAIMER_HTML, { parse_mode: 'HTML' });
+// ====== Soporte: comando y botón sin slash ======
+bot.onText(/^\/(soporte|ayuda|help)$/i, async (msg) => {
+  bot.sendMessage(
+    msg.chat.id,
+    `📞 Soporte (llamadas o SMS): ${SUPPORT_PHONE}\n\nPara gestionar tu suscripción escribe /portal.`
+  );
 });
 
-bot.onText(/^\/(soporte|ayuda|help)$/i, async (msg) => {
-  bot.sendMessage(msg.chat.id, `${SUPPORT_LINE_TXT}\n\nEscribe /portal para gestionar tu suscripción.`);
+// Botón "Soporte" del teclado (texto plano)
+bot.on('message', (msg) => {
+  if (!msg.text) return;
+  const t = msg.text.trim().toLowerCase();
+  if (t === 'soporte') {
+    bot.sendMessage(
+      msg.chat.id,
+      `📞 Soporte (llamadas o SMS): ${SUPPORT_PHONE}\n\nPara gestionar tu suscripción escribe /portal.`
+    );
+  }
 });
 
 // ====== Stripe Webhooks ======
